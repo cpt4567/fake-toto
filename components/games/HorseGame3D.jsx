@@ -1,93 +1,113 @@
 'use client'
 
-import { useState, useRef, useEffect, Suspense } from 'react'
-import { Canvas } from '@react-three/fiber'
-import { OrbitControls } from '@react-three/drei'
+import { useState, useRef, useEffect } from 'react'
+import {
+  Engine,
+  Scene,
+  ArcRotateCamera,
+  HemisphericLight,
+  Vector3,
+  MeshBuilder,
+  StandardMaterial,
+  Color3,
+  ShadowGenerator,
+  DirectionalLight,
+  Mesh,
+  SceneLoader,
+  PhotoDome,
+} from '@babylonjs/core'
+import '@babylonjs/loaders/glTF'
 import { useStore } from '@/store/useStore'
 
-const HORSE_COUNT = 8
 const HORSE_NAMES = ['번개', '질풍', '천마', '적토', '백룡', '흑운', '금강', '은화']
 const ODDS = [3.2, 2.8, 4.0, 2.5, 3.5, 2.2, 5.0, 2.8]
 const RACE_DURATION = 6000
-const TRACK_RADIUS = 4
-const LANE_WIDTH = 0.4
+const HORSE_COUNT = HORSE_NAMES.length
+const LANE_SPACING = 1.0
+const RACE_START_Z = -4
+const RACE_END_Z = 8
 
-function HorseModel({ color }) {
-  return (
-    <group>
-      <mesh position={[0, 0.2, 0]} castShadow>
-        <capsuleGeometry args={[0.08, 0.5, 4, 8]} />
-        <meshStandardMaterial color={color} />
-      </mesh>
-      <mesh position={[0.15, 0.35, 0.1]} castShadow>
-        <sphereGeometry args={[0.06, 8, 8]} />
-        <meshStandardMaterial color={color} />
-      </mesh>
-      <mesh position={[-0.1, 0.1, 0.15]} castShadow>
-        <cylinderGeometry args={[0.02, 0.02, 0.2, 6]} />
-        <meshStandardMaterial color={color} />
-      </mesh>
-      <mesh position={[-0.1, 0.1, -0.15]} castShadow>
-        <cylinderGeometry args={[0.02, 0.02, 0.2, 6]} />
-        <meshStandardMaterial color={color} />
-      </mesh>
-      <mesh position={[0.1, 0.1, 0.15]} castShadow>
-        <cylinderGeometry args={[0.02, 0.02, 0.2, 6]} />
-        <meshStandardMaterial color={color} />
-      </mesh>
-      <mesh position={[0.1, 0.1, -0.15]} castShadow>
-        <cylinderGeometry args={[0.02, 0.02, 0.2, 6]} />
-        <meshStandardMaterial color={color} />
-      </mesh>
-    </group>
+// Poly Haven CC0 - 야외 초원 (kloppenheim)
+const MEADOW_SKY = 'https://dl.polyhaven.org/file/ph-assets/HDRIs/extra/Tonemapped%20JPG/kloppenheim_02.jpg'
+
+const HORSE_SCALE = 0.35
+
+function createFallbackHorse(scene, color, name) {
+  const root = new Mesh(`horse_${name}`, scene)
+  root.isPickable = false
+  root.scaling = new Vector3(HORSE_SCALE, HORSE_SCALE, HORSE_SCALE)
+
+  const body = MeshBuilder.CreateCylinder(
+    `${name}_body`,
+    { height: 0.8, diameterTop: 0.35, diameterBottom: 0.4, tessellation: 16 },
+    scene
   )
+  body.parent = root
+  body.position.y = 0.5
+  body.rotation.x = Math.PI / 2
+  body.scaling.z = 1.5
+
+  const neck = MeshBuilder.CreateCylinder(
+    `${name}_neck`,
+    { height: 0.5, diameterTop: 0.15, diameterBottom: 0.25, tessellation: 12 },
+    scene
+  )
+  neck.parent = root
+  neck.position.set(0.35, 0.85, 0)
+  neck.rotation.x = -Math.PI / 4
+
+  const head = MeshBuilder.CreateSphere(
+    `${name}_head`,
+    { diameter: 0.35, segments: 12 },
+    scene
+  )
+  head.parent = root
+  head.position.set(0.6, 1.05, 0)
+  head.scaling.y = 1.2
+  head.scaling.z = 0.9
+
+  ;[
+    [-0.25, 0.2, 0.25],
+    [-0.25, 0.2, -0.25],
+    [0.25, 0.2, 0.25],
+    [0.25, 0.2, -0.25],
+  ].forEach((pos, i) => {
+    const leg = MeshBuilder.CreateCylinder(
+      `${name}_leg_${i}`,
+      { height: 0.4, diameter: 0.08, tessellation: 8 },
+      scene
+    )
+    leg.parent = root
+    leg.position.set(...pos)
+  })
+
+  const mat = new StandardMaterial(`${name}_mat`, scene)
+  mat.diffuseColor = color
+  mat.specularColor = new Color3(0.2, 0.2, 0.2)
+  root.getChildMeshes().forEach((m) => (m.material = mat))
+  return root
 }
 
-function Horse({ index, progress, color, laneOffset }) {
-  const angle = progress * Math.PI * 2
-  const radius = TRACK_RADIUS + laneOffset * LANE_WIDTH
-  const x = Math.cos(angle) * radius
-  const z = Math.sin(angle) * radius
-  const rotationY = -angle
-
-  return (
-    <group position={[x, 0.3, z]} rotation={[0, rotationY, 0]}>
-      <HorseModel color={color} />
-    </group>
+function createGround(scene) {
+  const ground = MeshBuilder.CreateGround(
+    'ground',
+    { width: 30, height: 30 },
+    scene
   )
-}
-
-function RaceTrack() {
-  return (
-    <group>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-        <ringGeometry args={[TRACK_RADIUS - 0.5, TRACK_RADIUS + 2, 64]} />
-        <meshStandardMaterial color="#0d2818" />
-      </mesh>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
-        <ringGeometry args={[TRACK_RADIUS - 0.3, TRACK_RADIUS + 1.8, 64]} />
-        <meshStandardMaterial color="#1a472a" />
-      </mesh>
-    </group>
-  )
-}
-
-function Scene({ positions }) {
-  const colors = ['#ef4444', '#3b82f6', '#22c55e', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16']
-
-  return (
-    <>
-      <ambientLight intensity={0.5} />
-      <directionalLight position={[10, 15, 10]} intensity={1.2} castShadow shadow-mapSize={[2048, 2048]} shadow-camera-far={50} shadow-camera-left={-10} shadow-camera-right={10} shadow-camera-top={10} shadow-camera-bottom={-10} />
-      <RaceTrack />
-      {positions.map((p, i) => (
-        <Horse key={i} index={i} progress={p} color={colors[i]} laneOffset={i - HORSE_COUNT / 2} />
-      ))}
-    </>
-  )
+  ground.position.y = -0.01
+  const grassMat = new StandardMaterial('grassMat', scene)
+  grassMat.diffuseColor = new Color3(0.22, 0.38, 0.24)
+  grassMat.specularColor = new Color3(0.02, 0.03, 0.02)
+  ground.material = grassMat
+  ground.receiveShadows = true
+  return ground
 }
 
 export default function HorseGame3D() {
+  const canvasRef = useRef(null)
+  const engineRef = useRef(null)
+  const sceneRef = useRef(null)
+  const horsesRef = useRef([])
   const [round, setRound] = useState(1)
   const [selected, setSelected] = useState(null)
   const [stake, setStake] = useState('')
@@ -96,6 +116,7 @@ export default function HorseGame3D() {
   const [winner, setWinner] = useState(null)
   const [recentWinners, setRecentWinners] = useState([3, 7, 1, 5, 2, 8, 4, 6])
   const speedsRef = useRef([])
+  const [loading, setLoading] = useState(true)
   const placeBet = useStore((state) => state.placeBet)
   const addWinnings = useStore((state) => state.addWinnings)
   const addToast = useStore((state) => state.addToast)
@@ -104,19 +125,165 @@ export default function HorseGame3D() {
   const rafRef = useRef(null)
 
   useEffect(() => {
-    if (!racing) return
+    if (!canvasRef.current) return
+
+    const engine = new Engine(canvasRef.current, true, {
+      preserveDrawingBuffer: true,
+      stencil: true,
+      antialias: true,
+    })
+    engineRef.current = engine
+
+    const scene = new Scene(engine)
+    scene.clearColor = new Color3(0.4, 0.55, 0.7)
+    sceneRef.current = scene
+
+    const camera = new ArcRotateCamera(
+      'camera',
+      -Math.PI / 2,
+      Math.PI / 2.2,
+      16,
+      new Vector3(0, 0, 2),
+      scene
+    )
+    camera.attachControl(canvasRef.current, true)
+    camera.wheelPrecision = 20
+    camera.minZ = 0.5
+
+    const light = new HemisphericLight(
+      'light',
+      new Vector3(0, 1, 0),
+      scene
+    )
+    light.intensity = 0.6
+
+    const dirLight = new DirectionalLight(
+      'dirLight',
+      new Vector3(-2, -5, -2),
+      scene
+    )
+    dirLight.position = new Vector3(10, 15, 10)
+    dirLight.intensity = 1.2
+
+    const shadowGen = new ShadowGenerator(2048, dirLight)
+    shadowGen.useBlurExponentialShadowMap = true
+    shadowGen.blurScale = 2
+
+    createGround(scene)
+
+    // 초원 360 배경 (PhotoDome)
+    try {
+      const skyDome = new PhotoDome(
+        'meadowSky',
+        MEADOW_SKY,
+        { resolution: 32, size: 1000 },
+        scene
+      )
+      skyDome.fovMultiplier = 1.5
+    } catch {
+      scene.clearColor = new Color3(0.4, 0.55, 0.7)
+    }
+
+    const horseColors = [
+      new Color3(0.94, 0.27, 0.27),
+      new Color3(0.23, 0.51, 0.96),
+      new Color3(0.13, 0.77, 0.37),
+      new Color3(0.96, 0.62, 0.04),
+      new Color3(0.55, 0.36, 0.96),
+      new Color3(0.02, 0.71, 0.84),
+      new Color3(0.93, 0.29, 0.6),
+      new Color3(0.52, 0.8, 0.09),
+    ]
+
+    const getLaneX = (i) => (i - (HORSE_COUNT - 1) / 2) * LANE_SPACING
+
+    const createHorses = (useFallback) => {
+      const horses = []
+      for (let i = 0; i < HORSE_COUNT; i++) {
+        const horse = useFallback
+          ? createFallbackHorse(scene, horseColors[i], i)
+          : null
+        if (horse) {
+          horse.position.x = getLaneX(i)
+          horse.position.z = RACE_START_Z
+          horse.position.y = 0
+          horse.rotation.y = 0
+          shadowGen.addShadowCaster(horse)
+          horses.push({ mesh: horse, laneIndex: i })
+        }
+      }
+      return horses
+    }
+
+    SceneLoader.ImportMesh(
+      '',
+      '/models/',
+      'Horse.glb',
+      scene,
+      (meshes) => {
+        if (!meshes.length) {
+          horsesRef.current = createHorses(true)
+          setLoading(false)
+          return
+        }
+
+        const meshSet = new Set(meshes)
+        const rootMesh = meshes.find((m) => !m.parent || !meshSet.has(m.parent)) || meshes[0]
+        rootMesh.setEnabled(false)
+        rootMesh.scaling = new Vector3(HORSE_SCALE, HORSE_SCALE, HORSE_SCALE)
+
+        const horses = []
+        for (let i = 0; i < HORSE_COUNT; i++) {
+          const clone = rootMesh.clone(`horse_${i}`, null, false)
+          clone.setEnabled(true)
+          clone.isPickable = false
+          clone.getChildMeshes().forEach((m) => (m.isPickable = false))
+          clone.position.set(getLaneX(i), 0, RACE_START_Z)
+          clone.rotation.y = 0
+          shadowGen.addShadowCaster(clone)
+          horses.push({ mesh: clone, laneIndex: i })
+        }
+        horsesRef.current = horses
+        setLoading(false)
+      },
+      null,
+      () => {
+        horsesRef.current = createHorses(true)
+        setLoading(false)
+      }
+    )
+
+    engine.runRenderLoop(() => scene.render(true))
+
+    return () => {
+      engine.dispose()
+      scene.dispose()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!racing || !horsesRef.current.length) return
 
     const speeds = Array.from({ length: HORSE_COUNT }, () => 0.08 + Math.random() * 0.15)
     speedsRef.current = speeds
     startTimeRef.current = performance.now()
 
-    const animate = (now) => {
-      const elapsed = now - startTimeRef.current
+    const animate = () => {
+      const elapsed = performance.now() - startTimeRef.current
       const progress = Math.min(elapsed / RACE_DURATION, 1)
 
       const newPositions = speedsRef.current.map((speed) =>
         Math.min(progress * speed * 1.5, 1)
       )
+
+      horsesRef.current.forEach(({ mesh, laneIndex }, i) => {
+        const p = newPositions[i]
+        const z = RACE_START_Z + p * (RACE_END_Z - RACE_START_Z)
+        mesh.position.x = (laneIndex - (HORSE_COUNT - 1) / 2) * LANE_SPACING
+        mesh.position.z = z
+        mesh.position.y = 0
+      })
+
       setPositions([...newPositions])
 
       if (progress >= 1) {
@@ -135,6 +302,11 @@ export default function HorseGame3D() {
           addToast({ message: `${HORSE_NAMES[winnerIdx - 1]} 우승. 아쉽습니다!`, type: 'error' })
         }
         setTimeout(() => {
+          horsesRef.current.forEach(({ mesh, laneIndex }) => {
+            mesh.position.x = (laneIndex - (HORSE_COUNT - 1) / 2) * LANE_SPACING
+            mesh.position.z = RACE_START_Z
+            mesh.position.y = 0
+          })
           setRound((r) => r + 1)
           setWinner(null)
           setSelected(null)
@@ -165,33 +337,30 @@ export default function HorseGame3D() {
           <div className="rounded-2xl border border-slate-700/60 bg-slate-800/50 p-4 sm:p-6 overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
               <div>
-                <h2 className="text-base sm:text-lg font-bold text-white">3D 경마</h2>
-                <p className="text-slate-400 text-xs sm:text-sm mt-1">8마리 - 3D 트랙에서 실제 레이스</p>
+                <h2 className="text-base sm:text-lg font-bold text-white">3D 경마 (Babylon.js)</h2>
+                <p className="text-slate-400 text-xs sm:text-sm mt-1">{HORSE_COUNT}마리 - 초원 배경</p>
               </div>
               <div className="flex items-center gap-3">
                 <div className="text-right">
                   <p className="text-slate-500 text-xs">경주</p>
                   <p className="text-amber-400 font-bold tabular-nums">{String(round).padStart(3, '0')}R</p>
                 </div>
-                {racing && !winner && (
+                {loading && (
+                  <div className="text-slate-400 text-sm">로딩 중...</div>
+                )}
+                {racing && !winner && !loading && (
                   <div className="text-rose-400 text-sm font-bold animate-pulse">경주 중...</div>
                 )}
               </div>
             </div>
 
-            <div className="rounded-xl overflow-hidden border border-slate-700/50 bg-slate-900 w-full aspect-video min-h-[200px] sm:min-h-[280px]">
-              <Canvas shadows camera={{ position: [0, 12, 12], fov: 45 }}>
-                <Suspense fallback={null}>
-                  <Scene positions={positions} />
-                  <OrbitControls
-                    enableZoom={true}
-                    minDistance={8}
-                    maxDistance={25}
-                    minPolarAngle={Math.PI / 4}
-                    maxPolarAngle={Math.PI / 2}
-                  />
-                </Suspense>
-              </Canvas>
+            <div className="rounded-xl overflow-hidden border border-slate-700/50 bg-slate-900 w-full aspect-video min-h-[200px] sm:min-h-[280px] relative">
+              {loading && (
+                <div className="absolute inset-0 flex items-center justify-center bg-slate-900/90 z-10">
+                  <div className="text-slate-400 text-sm">말 모델 로딩 중...</div>
+                </div>
+              )}
+              <canvas ref={canvasRef} className="w-full h-full touch-none" />
             </div>
 
             <div className="grid grid-cols-4 sm:grid-cols-8 gap-1 sm:gap-2 mt-4">
