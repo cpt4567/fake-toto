@@ -32,11 +32,21 @@ npm start
 - Zustand (상태 관리)
 - Three.js / React Three Fiber (3D 경마)
 
-## 배포 (Vercel)
+## GitHub & 배포
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/YOUR_USERNAME/fake-toto)
+### GitHub 연결
 
-1. GitHub에 저장소 푸시
-2. [Vercel](https://vercel.com)에 로그인
-3. "Import Project" → GitHub 저장소 선택
-4. 자동 배포 완료
+```bash
+# 1. GitHub에서 fake-toto 저장소 생성 (빈 저장소)
+# 2. 원격 연결 및 푸시
+./scripts/setup-github.sh YOUR_GITHUB_USERNAME
+git push -u origin main
+```
+
+### Vercel 배포
+
+1. [Vercel](https://vercel.com) 로그인 (GitHub 연동)
+2. **Import Project** → `fake-toto` 저장소 선택
+3. **Deploy** → 완료 (URL 자동 발급)
+
+자세한 내용은 [DEPLOY.md](./DEPLOY.md) 참고
